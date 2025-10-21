@@ -156,7 +156,6 @@ fn main() {
                                     }
                                 }
                                 None => {
-                                    // Only log parsing failures for Apache to reduce noise
                                     if let LogSource::Apache(_) = source_clone {
                                         tracker_clone.lock().unwrap().log(&format!(
                                             "[{}] Failed to parse line: {}",
