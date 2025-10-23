@@ -90,7 +90,9 @@ fn main() {
     )));
 
     {
-        tracker.lock().unwrap().load_blocklist();
+        let mut guard = tracker.lock().unwrap();
+        guard.load_blocklist();
+        guard.prepare_chain();
     }
 
     let tracker_clone = tracker.clone();

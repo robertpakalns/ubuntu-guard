@@ -231,9 +231,9 @@ impl GuardTracker {
 
     fn ban_ip(&self, ip: &str) {
         match ip.parse::<IpAddr>() {
-            Ok(IpAddr::V4(_)) => self.run_iptables("iptables", "-A", ip),
-            Ok(IpAddr::V6(_)) => self.run_iptables("ip6tables", "-A", ip),
-            Err(e) => self.log(&format!("Invalid IP address '{}': {}", ip, e)),
+            Ok(IpAddr::V4(_)) => self.run_iptables("iptables", "-I", ip),
+            Ok(IpAddr::V6(_)) => self.run_iptables("ip6tables", "-I", ip),
+            Err(e) => self.log(&format!("Invalid IP address '{ip}': {e}")),
         }
     }
 
@@ -241,7 +241,7 @@ impl GuardTracker {
         match ip.parse::<IpAddr>() {
             Ok(IpAddr::V4(_)) => self.run_iptables("iptables", "-D", ip),
             Ok(IpAddr::V6(_)) => self.run_iptables("ip6tables", "-D", ip),
-            Err(e) => self.log(&format!("Invalid IP address '{}': {}", ip, e)),
+            Err(e) => self.log(&format!("Invalid IP address '{ip}': {e}")),
         }
     }
 
@@ -249,26 +249,74 @@ impl GuardTracker {
         let status = Command::new("sudo")
             .arg(cmd)
             .arg(action)
-            .arg("INPUT")
+            .arg("ubuntu-guard")
             .arg("-s")
             .arg(ip)
             .arg("-j")
-            .arg("DROP")
+            .arg("REJECT")
             .status();
 
         match status {
             Ok(s) if s.success() => self.log(&format!(
                 "Successfully {} IP {ip} using {cmd}",
-                if action == "-A" { "banned" } else { "unbanned" },
+                if action == "-I" { "banned" } else { "unbanned" },
             )),
             Ok(s) => self.log(&format!(
                 "Failed to {} IP {ip}; exit code: {s}",
-                if action == "-A" { "ban" } else { "unban" },
+                if action == "-I" { "ban" } else { "unban" },
             )),
             Err(e) => self.log(&format!(
                 "Error while trying to {} IP {ip}: {e}",
-                if action == "-A" { "ban" } else { "unban" },
+                if action == "-I" { "ban" } else { "unban" },
             )),
+        }
+    }
+
+    pub fn prepare_chain(&self) {
+        self.create_and_link_chain("iptables");
+        self.create_and_link_chain("ip6tables");
+    }
+
+    fn create_and_link_chain(&self, cmd: &str) {
+        let name = "ubuntu-guard";
+
+        let chain_exists = Command::new("sudo")
+            .arg(cmd)
+            .arg("-L")
+            .arg(name)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !chain_exists {
+            self.log(&format!("Creating new chain {name} in {cmd}"));
+            if let Err(e) = Command::new("sudo").arg(cmd).arg("-N").arg(name).status() {
+                self.log(&format!("Failed to create chain {name} in {cmd}: {e}"));
+            }
+        }
+
+        let linked = Command::new("sudo")
+            .arg(cmd)
+            .arg("-C")
+            .arg("INPUT")
+            .arg("-j")
+            .arg(name)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !linked {
+            self.log(&format!("Linking {name} to INPUT in {cmd}"));
+            if let Err(e) = Command::new("sudo")
+                .arg(cmd)
+                .arg("-A")
+                .arg("INPUT")
+                .arg("-j")
+                .arg(name)
+                .status()
+            {
+                self.log(&format!("Failed to link {name} to INPUT in {cmd}: {e}"));
+            }
         }
     }
 }
