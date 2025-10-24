@@ -73,11 +73,13 @@ fn main() {
         env::var("GUARD_BANNED_IP_PATH").expect("GUARD_BANNED_IP_PATH not set");
     let guard_log_path = env::var("GUARD_LOG_PATH").expect("GUARD_LOG_PATH not set");
 
-    let file_paths: Vec<String> = env::var("LOG_PATHS")
-        .expect("LOG_PATHS not set")
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
+    let mut file_paths: Vec<String> = vec!["/var/log/auth.log".to_string()];
+    // /var/log/auth.log + all paths from LOG_PATHS
+    if let Ok(paths) = env::var("LOG_PATHS") {
+        for p in paths.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            file_paths.push(p.to_string());
+        }
+    }
 
     let log_sources: Vec<LogSource> = file_paths.iter().map(|p| LogSource::from_path(p)).collect();
 
