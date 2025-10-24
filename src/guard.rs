@@ -311,6 +311,7 @@ impl GuardTracker {
                 .arg(cmd)
                 .arg("-A")
                 .arg("INPUT")
+                .arg("1") // Position 1 to reject banned IP addresses first
                 .arg("-j")
                 .arg(name)
                 .status()
