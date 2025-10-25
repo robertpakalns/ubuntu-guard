@@ -11,6 +11,7 @@ mod guard;
 mod parse_logs;
 mod reader;
 mod test_path;
+mod test_regex;
 
 fn parse_env_usize(name: &str) -> u64 {
     env::var(name)
@@ -63,6 +64,30 @@ impl LogSource {
 }
 
 fn main() {
+    // Test regex for Apache and SSH logs
+    // ./guard test /var/log/apache2/access.log
+    // ./guard test /var/log/apache2/access.log --print-all-matched
+    // ./guard test /var/log/apache2/access.log --print-all-missed
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "test" {
+        if args.len() < 3 {
+            eprintln!(
+                "Usage: {} test <log_path> [--print-all-matched] [--print-all-missed]",
+                args[0]
+            );
+            std::process::exit(1);
+        }
+
+        let log_path = &args[2];
+        let print_matched = args.contains(&"--print-all-matched".to_string());
+        let print_missed = args.contains(&"--print-all-missed".to_string());
+
+        test_regex::test(log_path, print_matched, print_missed);
+        return;
+    }
+
+    // Run the Guard continuously
+    // ./guard
     dotenvy::dotenv().ok();
 
     let threshold = parse_env_usize("THRESHOLD");
