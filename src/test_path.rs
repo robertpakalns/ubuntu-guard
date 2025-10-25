@@ -2,22 +2,32 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 static BAD_APACHE_PATTERNS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?ix)
+    Regex::new(
+        r"(?ix)
         # .env files
         \.env(\.[A-Za-z0-9_-]+)? |
+
+        # Config files
+        \.config |
+        config\.json |
 
         # Suspicious extensions
         \.(php[0-9]*|env|zip|rsp|aspx|asp[0-9]*|jsp[0-9]*|cgi|xml)(\?|$) |
 
         # Suspicious directories
-        /(service/api-docs|cgi-bin/.*|wp-[^/\s]+.*|solr.*|\.git(/.*)?$|evox.*) |
+        /(service/api-docs|geoserver/.*|goform/.*|_profiler/.*| _ignition/.*|cgi-bin/.*|wp-[^/\s]+.*|solr.*|\.git(/.*)?$|evox.*) |
 
         # Remote command execution style
         /shell\? |
 
         # InfluxDB-like query scans
-        /query\?
-    ").unwrap()
+        /query\? |
+
+        # Whatever it is
+        \?XDEBUG_SESSION_START=
+    ",
+    )
+    .unwrap()
 });
 
 pub fn is_bad_apache(path: &str) -> bool {
@@ -32,8 +42,12 @@ mod tests {
     fn test_bad_paths() {
         let bad_paths = [
             "/.env",
+            "/.env.bak",
+            "/beep/.env.bak",
             "/.env/beep",
             "/.env/beep/boop",
+            "/.config",
+            "/config.json",
             "/test.php",
             "/test.php0",
             "/test.php1",
@@ -50,6 +64,7 @@ mod tests {
             "/mysqladmin/index.php?lang=en",
             "/mail/.env.db",
             "/db/phpmyadmin/index.php?lang=en",
+            "/?XDEBUG_SESSION_START=phpstorm",
         ];
 
         for path in bad_paths {
