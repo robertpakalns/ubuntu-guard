@@ -1,25 +1,27 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-static BAD_APACHE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    vec![
-        // .env files
-        Regex::new(r"(?i)\.env(\.[A-Za-z0-9_-]+)?").unwrap(),
-        // Suspicious extensions
-        Regex::new(r"(?i)\.(php[0-9]*|env|zip|rsp|aspx|asp[0-9]*|jsp[0-9]*|cgi|xml)(\?|$)")
-            .unwrap(),
-        // Suspicious directories
-        Regex::new(r"(?i)/(service/api-docs|cgi-bin/.*|wp-[^/\s]+.*|solr.*|\.git(/.*)?$|evox.*)")
-            .unwrap(),
-        // RCE-style requests
-        Regex::new(r"(?i)/shell\?").unwrap(),
-        // InfluxDB-like query scans
-        Regex::new(r"(?i)/query\?").unwrap(),
-    ]
+static BAD_APACHE_PATTERNS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?ix)
+        # .env files
+        \.env(\.[A-Za-z0-9_-]+)? |
+
+        # Suspicious extensions
+        \.(php[0-9]*|env|zip|rsp|aspx|asp[0-9]*|jsp[0-9]*|cgi|xml)(\?|$) |
+
+        # Suspicious directories
+        /(service/api-docs|cgi-bin/.*|wp-[^/\s]+.*|solr.*|\.git(/.*)?$|evox.*) |
+
+        # Remote command execution style
+        /shell\? |
+
+        # InfluxDB-like query scans
+        /query\?
+    ").unwrap()
 });
 
 pub fn is_bad_apache(path: &str) -> bool {
-    BAD_APACHE_PATTERNS.iter().any(|re| re.is_match(path))
+    BAD_APACHE_PATTERNS.is_match(path)
 }
 
 #[cfg(test)]
