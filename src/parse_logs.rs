@@ -32,16 +32,13 @@ mod tests {
     #[test]
     fn test_parse_apache() {
         let lines = [
-            // normal GET request
             r#"123.45.67.89 - - [24/Oct/2025:09:00:16 +0000] "GET / HTTP/1.1" 301 574 "-" "Mozilla/5.0""#,
-            // normal GET to e.php
             r#"98.76.54.32 - - [24/Oct/2025:09:20:49 +0000] "GET /e.php HTTP/1.1" 403 439 "-" "curl/8.14.1""#,
-            // malformed TLS-like request
             r#"111.222.333.44 - - [24/Oct/2025:10:17:16 +0000] "\x16\x03\x01" 400 483 "-" "-""#,
-            // empty request
             r#"55.66.77.88 - - [24/Oct/2025:10:17:34 +0000] "-" 408 0 "-" "-""#,
-            // CONNECT request
             r#"123.123.123.123 - - [24/Oct/2025:10:09:35 +0000] "CONNECT api.my-ip.io:443 HTTP/1.1" 301 518 "-" "Go-http-client/1.1""#,
+            r#"123.123.123.123 - - [25/Oct/2025:00:29:11 +0000] "GET /mail/.env.db HTTP/1.1" 301 536 "-" "Opera/8.02 (Windows NT 5.1; U; ru)""#,
+            r#"123.123.123.123 - - [25/Oct/2025:11:10:28 +0000] "GET /db/phpmyadmin/index.php?lang=en HTTP/1.1" 301 574 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36""#,
         ];
 
         let expected = [
@@ -64,6 +61,14 @@ mod tests {
             Log::Apache {
                 ip: "123.123.123.123",
                 path: "api.my-ip.io:443",
+            },
+            Log::Apache {
+                ip: "123.123.123.123",
+                path: "/mail/.env.db",
+            },
+            Log::Apache {
+                ip: "123.123.123.123",
+                path: "/db/phpmyadmin/index.php?lang=en",
             },
         ];
 

