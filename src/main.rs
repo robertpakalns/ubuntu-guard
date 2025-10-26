@@ -1,7 +1,7 @@
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Result, Watcher};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Result, Watcher};
 use std::{
     env,
-    path::Path,
+    path::PathBuf,
     sync::{Arc, Mutex},
     thread::{sleep, spawn},
     time::Duration,
@@ -137,55 +137,69 @@ fn main() {
     let mut watchers = Vec::new();
 
     for source in log_sources {
-        let path = Path::new(source.path()).to_path_buf();
-        let tail_reader =
-            Arc::new(reader::TailReader::new(&path).expect("Failed to initialize TailReader"));
+        let log_path = PathBuf::from(source.path());
+        let log_file_name = log_path
+            .file_name()
+            .expect("Invalid log path")
+            .to_string_lossy()
+            .to_string();
+        let log_dir = log_path
+            .parent()
+            .expect("Log file must have a parent directory")
+            .to_path_buf();
 
-        let reader_clone = tail_reader.clone();
+        let tail_reader = Arc::new(
+            reader::TailReader::new(log_dir.join(&log_file_name))
+                .expect("Failed to initialize TailReader"),
+        );
+
+        let tr_clone = tail_reader.clone();
         let tracker_clone = tracker.clone();
         let source_clone = source.clone();
-        let s = source.clone();
 
         let mut watcher = RecommendedWatcher::new(
-            move |res: Result<Event>| match res {
-                Ok(event) => {
-                    if let EventKind::Modify(_) = event.kind {
-                        for line in reader_clone.read_new_lines() {
-                            match source_clone.parse(&line) {
-                                Some(parsed) => {
-                                    let mut tracker = tracker_clone.lock().unwrap();
-
-                                    match &parsed {
-                                        parse_logs::Log::Apache { ip, path } => {
-                                            if tracker.is_blocked(ip) {
-                                                return;
+            move |res: Result<notify::Event>| {
+                if let Ok(event) = res {
+                    if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+                        for path in &event.paths {
+                            if path
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .map(|f| f == log_file_name)
+                                .unwrap_or(false)
+                            {
+                                for line in tr_clone.read_new_lines() {
+                                    if let Some(parsed) = source_clone.parse(&line) {
+                                        let mut tracker = tracker_clone.lock().unwrap();
+                                        match &parsed {
+                                            parse_logs::Log::Apache { ip, path } => {
+                                                if tracker.is_blocked(ip) {
+                                                    continue;
+                                                }
+                                                if source_clone.is_bad(path) {
+                                                    tracker.log(&format!(
+                                                        "[{}] Registering IP {}",
+                                                        source_clone.prefix(),
+                                                        ip
+                                                    ));
+                                                    tracker.register_attempt(ip);
+                                                }
                                             }
-                                            if source_clone.is_bad(path) {
-                                                tracker.log(&format!(
-                                                    "[{}] Registering IP {}",
-                                                    source_clone.prefix(),
-                                                    ip
-                                                ));
-                                                tracker.register_attempt(ip);
+                                            parse_logs::Log::Ssh { ip, msg } => {
+                                                if tracker.is_blocked(ip) {
+                                                    continue;
+                                                }
+                                                if source_clone.is_bad(msg) {
+                                                    tracker.log(&format!(
+                                                        "[{}] Registering IP {}",
+                                                        source_clone.prefix(),
+                                                        ip
+                                                    ));
+                                                    tracker.register_attempt(ip);
+                                                }
                                             }
                                         }
-                                        parse_logs::Log::Ssh { ip, msg } => {
-                                            if tracker.is_blocked(ip) {
-                                                return;
-                                            }
-                                            if source_clone.is_bad(msg) {
-                                                tracker.log(&format!(
-                                                    "[{}] Registering IP {}",
-                                                    source_clone.prefix(),
-                                                    ip
-                                                ));
-                                                tracker.register_attempt(ip);
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    if let LogSource::Apache(_) = source_clone {
+                                    } else if let LogSource::Apache(_) = source_clone {
                                         tracker_clone.lock().unwrap().log(&format!(
                                             "[{}] Failed to parse line: {}",
                                             source_clone.prefix(),
@@ -197,9 +211,6 @@ fn main() {
                         }
                     }
                 }
-                Err(e) => {
-                    println!("Watcher error on {}: {:?}", source.path(), e);
-                }
             },
             Config::default()
                 .with_poll_interval(Duration::from_secs(1))
@@ -208,10 +219,10 @@ fn main() {
         .expect("Failed to create watcher");
 
         watcher
-            .watch(&path, RecursiveMode::NonRecursive)
-            .expect("Failed to watch log file");
+            .watch(&log_dir, RecursiveMode::NonRecursive)
+            .expect("Failed to watch log directory");
 
-        println!("Watching {}", s.path());
+        println!("Watching directory {:?}", log_dir);
         watchers.push(watcher);
     }
 
