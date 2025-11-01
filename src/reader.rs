@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{BufRead, BufReader, Seek, SeekFrom},
+    os::unix::fs::MetadataExt,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
