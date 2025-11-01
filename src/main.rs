@@ -100,9 +100,7 @@ fn main() {
         env::var("GUARD_BANNED_IP_PATH").expect("GUARD_BANNED_IP_PATH not set");
     let guard_log_path = env::var("GUARD_LOG_PATH").expect("GUARD_LOG_PATH not set");
 
-    let file_paths: Vec<String> = vec!["/var/log/auth.log".to_string()];
-
-    let log_sources: Vec<LogSource> = file_paths.iter().map(|p| LogSource::from_path(p)).collect();
+    let log_sources = vec![LogSource::Ssh("/var/log/auth.log".to_string())];
 
     let tracker = Arc::new(Mutex::new(guard::GuardTracker::new(
         threshold,
@@ -137,7 +135,7 @@ fn main() {
         let dir = PathBuf::from(source.path())
             .parent()
             .expect("Log file must have a parent directory")
-            .to_path_buf();
+            .into();
         dir_map.entry(dir).or_default().push(source);
     }
 
@@ -150,10 +148,9 @@ fn main() {
         if log_dir == PathBuf::from("/var/log/apache2") {
             if let Ok(entries) = read_dir(&log_dir) {
                 for entry in entries.flatten() {
-                    let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|f| f.to_str()) {
+                    if let Some(name) = entry.file_name().to_str() {
                         if name.ends_with("access.log") {
-                            let path_str = path.to_string_lossy().to_string();
+                            let path_str = entry.path().to_string_lossy().to_string();
                             if !sources.iter().any(|s| s.path() == path_str) {
                                 sources.push(LogSource::Apache(path_str));
                             }
@@ -173,7 +170,7 @@ fn main() {
                 .to_string_lossy()
                 .to_string();
             let reader = Arc::new(
-                reader::TailReader::new(PathBuf::from(src.path()))
+                reader::TailReader::new(src.path().into())
                     .expect("Failed to initialize TailReader"),
             );
             tail_readers.insert(name.clone(), reader);
@@ -198,32 +195,29 @@ fn main() {
                                                 let mut tracker = tracker_clone.lock().unwrap();
                                                 match parsed {
                                                     parse_logs::Log::Apache { ip, path } => {
-                                                        if tracker.is_blocked(ip) {
-                                                            continue;
-                                                        }
-                                                        if source.is_bad(path) {
+                                                        if !tracker.is_blocked(ip)
+                                                            && source.is_bad(path)
+                                                        {
                                                             tracker.log(&format!(
-                                                                "[{}] Registering IP {}",
+                                                                "[{}] Registering IP {ip}",
                                                                 source.prefix(),
-                                                                ip
                                                             ));
                                                             tracker.register_attempt(ip);
                                                         }
                                                     }
                                                     parse_logs::Log::Ssh { ip, msg } => {
-                                                        if tracker.is_blocked(ip) {
-                                                            continue;
-                                                        }
-                                                        if source.is_bad(msg) {
+                                                        if !tracker.is_blocked(ip)
+                                                            && source.is_bad(msg)
+                                                        {
                                                             tracker.log(&format!(
-                                                                "[{}] Registering IP {}",
+                                                                "[{}] Registering IP {ip}",
                                                                 source.prefix(),
-                                                                ip
                                                             ));
                                                             tracker.register_attempt(ip);
                                                         }
                                                     }
                                                 }
+                                                // Failed to parse a line. An error is logged only for Apache
                                             } else if let LogSource::Apache(_) = source {
                                                 tracker_clone.lock().unwrap().log(&format!(
                                                     "[{}] Failed to parse line: {}",
