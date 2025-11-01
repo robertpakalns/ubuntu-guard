@@ -1,7 +1,9 @@
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Result, Watcher};
 use std::{
+    collections::HashMap,
     env,
-    path::PathBuf,
+    fs::read_dir,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread::{sleep, spawn},
     time::Duration,
@@ -98,13 +100,7 @@ fn main() {
         env::var("GUARD_BANNED_IP_PATH").expect("GUARD_BANNED_IP_PATH not set");
     let guard_log_path = env::var("GUARD_LOG_PATH").expect("GUARD_LOG_PATH not set");
 
-    let mut file_paths: Vec<String> = vec!["/var/log/auth.log".to_string()];
-    // /var/log/auth.log + all paths from LOG_PATHS
-    if let Ok(paths) = env::var("LOG_PATHS") {
-        for p in paths.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            file_paths.push(p.to_string());
-        }
-    }
+    let file_paths: Vec<String> = vec!["/var/log/auth.log".to_string()];
 
     let log_sources: Vec<LogSource> = file_paths.iter().map(|p| LogSource::from_path(p)).collect();
 
@@ -135,76 +131,107 @@ fn main() {
     });
 
     let mut watchers = Vec::new();
+    let mut dir_map: HashMap<PathBuf, Vec<LogSource>> = HashMap::new();
 
     for source in log_sources {
-        let log_path = PathBuf::from(source.path());
-        let log_file_name = log_path
-            .file_name()
-            .expect("Invalid log path")
-            .to_string_lossy()
-            .to_string();
-        let log_dir = log_path
+        let dir = PathBuf::from(source.path())
             .parent()
             .expect("Log file must have a parent directory")
             .to_path_buf();
+        dir_map.entry(dir).or_default().push(source);
+    }
 
-        let tail_reader = Arc::new(
-            reader::TailReader::new(log_dir.join(&log_file_name))
-                .expect("Failed to initialize TailReader"),
-        );
+    let apache_dir = PathBuf::from("/var/log/apache2");
+    if !dir_map.contains_key(&apache_dir) && apache_dir.exists() {
+        dir_map.insert(apache_dir.clone(), vec![]);
+    }
 
-        let tr_clone = tail_reader.clone();
+    for (log_dir, mut sources) in dir_map {
+        if log_dir == PathBuf::from("/var/log/apache2") {
+            if let Ok(entries) = read_dir(&log_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(name) = path.file_name().and_then(|f| f.to_str()) {
+                        if name.ends_with("access.log") {
+                            let path_str = path.to_string_lossy().to_string();
+                            if !sources.iter().any(|s| s.path() == path_str) {
+                                sources.push(LogSource::Apache(path_str));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut tail_readers: HashMap<String, Arc<reader::TailReader>> = HashMap::new();
+        let mut sources_map: HashMap<String, LogSource> = HashMap::new();
+
+        for src in sources {
+            let name = Path::new(src.path())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            let reader = Arc::new(
+                reader::TailReader::new(PathBuf::from(src.path()))
+                    .expect("Failed to initialize TailReader"),
+            );
+            tail_readers.insert(name.clone(), reader);
+            sources_map.insert(name, src);
+        }
+
+        let watched_files: Vec<String> = sources_map.keys().cloned().collect();
+
         let tracker_clone = tracker.clone();
-        let source_clone = source.clone();
+        let log_dir_clone = log_dir.clone();
 
         let mut watcher = RecommendedWatcher::new(
             move |res: Result<notify::Event>| {
                 if let Ok(event) = res {
                     if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                         for path in &event.paths {
-                            if path
-                                .file_name()
-                                .and_then(|f| f.to_str())
-                                .map(|f| f == log_file_name)
-                                .unwrap_or(false)
-                            {
-                                for line in tr_clone.read_new_lines() {
-                                    if let Some(parsed) = source_clone.parse(&line) {
-                                        let mut tracker = tracker_clone.lock().unwrap();
-                                        match &parsed {
-                                            parse_logs::Log::Apache { ip, path } => {
-                                                if tracker.is_blocked(ip) {
-                                                    continue;
+                            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
+                                if let Some(source) = sources_map.get(fname) {
+                                    if let Some(reader) = tail_readers.get(fname) {
+                                        for line in reader.read_new_lines() {
+                                            if let Some(parsed) = source.parse(&line) {
+                                                let mut tracker = tracker_clone.lock().unwrap();
+                                                match parsed {
+                                                    parse_logs::Log::Apache { ip, path } => {
+                                                        if tracker.is_blocked(ip) {
+                                                            continue;
+                                                        }
+                                                        if source.is_bad(path) {
+                                                            tracker.log(&format!(
+                                                                "[{}] Registering IP {}",
+                                                                source.prefix(),
+                                                                ip
+                                                            ));
+                                                            tracker.register_attempt(ip);
+                                                        }
+                                                    }
+                                                    parse_logs::Log::Ssh { ip, msg } => {
+                                                        if tracker.is_blocked(ip) {
+                                                            continue;
+                                                        }
+                                                        if source.is_bad(msg) {
+                                                            tracker.log(&format!(
+                                                                "[{}] Registering IP {}",
+                                                                source.prefix(),
+                                                                ip
+                                                            ));
+                                                            tracker.register_attempt(ip);
+                                                        }
+                                                    }
                                                 }
-                                                if source_clone.is_bad(path) {
-                                                    tracker.log(&format!(
-                                                        "[{}] Registering IP {}",
-                                                        source_clone.prefix(),
-                                                        ip
-                                                    ));
-                                                    tracker.register_attempt(ip);
-                                                }
-                                            }
-                                            parse_logs::Log::Ssh { ip, msg } => {
-                                                if tracker.is_blocked(ip) {
-                                                    continue;
-                                                }
-                                                if source_clone.is_bad(msg) {
-                                                    tracker.log(&format!(
-                                                        "[{}] Registering IP {}",
-                                                        source_clone.prefix(),
-                                                        ip
-                                                    ));
-                                                    tracker.register_attempt(ip);
-                                                }
+                                            } else if let LogSource::Apache(_) = source {
+                                                tracker_clone.lock().unwrap().log(&format!(
+                                                    "[{}] Failed to parse line: {}",
+                                                    source.prefix(),
+                                                    line
+                                                ));
                                             }
                                         }
-                                    } else if let LogSource::Apache(_) = source_clone {
-                                        tracker_clone.lock().unwrap().log(&format!(
-                                            "[{}] Failed to parse line: {}",
-                                            source_clone.prefix(),
-                                            line
-                                        ));
                                     }
                                 }
                             }
@@ -219,10 +246,13 @@ fn main() {
         .expect("Failed to create watcher");
 
         watcher
-            .watch(&log_dir, RecursiveMode::NonRecursive)
+            .watch(&log_dir_clone, RecursiveMode::NonRecursive)
             .expect("Failed to watch log directory");
 
-        println!("Watching directory {:?}", log_dir);
+        println!(
+            "Watching directory {:?} for log files {:?}",
+            log_dir_clone, watched_files
+        );
         watchers.push(watcher);
     }
 
