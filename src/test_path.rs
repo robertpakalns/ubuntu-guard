@@ -6,7 +6,7 @@ static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?i)/\.env(\.[A-Za-z0-9_-]+)?(\b|/|\?)",
         r"(?i)^/(\.config)\b",
         r"(?i)^/config\.json\b",
-        r"(?i)\.(php[0-9]*|env|zip|rsp|aspx|asp[0-9]*|jsp[0-9]*|cgi|xml)(\?|$)",
+        r"(?i)^/(?:config|web)\.xml\b",
         r"(?i)^/actuator(/|$)",
         r"(?i)^/phpmyadmin(/|$)",
         r"(?i)^/wordpress(/|$)",
@@ -23,6 +23,10 @@ static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?i)^/shell\?",
         r"(?i)^/query\?",
         r"(?i)\?XDEBUG_SESSION_START=",
+        r"(?i)\.(php[0-9]*|env|zip|tar|gz|tgz|rar|bak|old|save|example|db|sqlite3?|ini|yaml|yml|cfg|conf|rsp|aspx|asp[0-9]*|jsp[0-9]*|cgi|xml)(\b|/|\?|$)",
+        r"(?i)^/(?:vendor|storage|config|resources|public)/.*\.(env|php|ini|yaml|yml|cfg|conf)(\b|/|\?|$)",
+        r"(?i)^/(?:env|php|cgi|shell|config|backup|backups)(/|$)",
+        r"\.\./",
     ])
     .unwrap()
 });
