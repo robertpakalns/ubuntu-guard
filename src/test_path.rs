@@ -8,9 +8,17 @@ static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?i)^/config\.json\b",
         r"(?i)^/(?:config|web)\.xml\b",
         r"(?i)^/actuator(/|$)",
+        r"(?i)^/boaform(/|$)",
+        r"(?i)^/zabbix(/|$)",
+        r"(?i)^/druid(/|$)",
+        r"(?i)^/jasperserver(/|$)",
+        r"(?i)^/partymgr(/|$)",
+        r"(?i)^/admin(/|$)",
+        r"(?i)^/developmentserver(/|$)",
         r"(?i)^/phpmyadmin(/|$)",
         r"(?i)^/wordpress(/|$)",
         r"(?i)^/telescope(/|$)",
+        r"(?i)^/\+CSCOE\+(/|$)",
         r"(?i)^/console(/|$)",
         r"(?i)^/geoserver(/|$)",
         r"(?i)^/service/api-docs(/|$)",
@@ -123,6 +131,10 @@ mod tests {
             "/tsconfig.app.json",
             "/tsconfig.json",
             "/tsconfig.spec.json",
+            "/boaform/admin",
+            "/admin",
+            "/developmentserver/metadatauploader",
+            "/+CSCOE+/logon_forms.js",
         ];
         for p in bad_paths {
             assert!(is_bad_apache(p), "Should match {p}");
