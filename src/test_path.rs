@@ -47,13 +47,13 @@ static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
     .unwrap()
 });
 
-pub fn is_bad_apache(path: &str) -> bool {
+pub fn is_bad_path(path: &str) -> bool {
     BAD_APACHE_SET.is_match(path)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_bad_apache;
+    use super::is_bad_path;
 
     #[test]
     fn test_bad_paths() {
@@ -137,7 +137,7 @@ mod tests {
             "/+CSCOE+/logon_forms.js",
         ];
         for p in bad_paths {
-            assert!(is_bad_apache(p), "Should match {p}");
+            assert!(is_bad_path(p), "Should match {p}");
         }
     }
 
@@ -151,7 +151,7 @@ mod tests {
             "/foo.phpbiba",
         ];
         for p in good_paths {
-            assert!(!is_bad_apache(p), "Should not match {p}");
+            assert!(!is_bad_path(p), "Should not match {p}");
         }
     }
 }

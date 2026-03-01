@@ -22,9 +22,9 @@ fn parse_env_usize(name: &str) -> u64 {
         .expect(&format!("{name} must be an integer"))
 }
 
-#[derive(Debug, Clone)]
 enum LogSource {
     Apache(String),
+    Nginx(String),
     Ssh(String),
 }
 
@@ -32,6 +32,8 @@ impl LogSource {
     fn from_path(path: &str) -> Self {
         if path == "/var/log/auth.log" {
             LogSource::Ssh(path.to_string())
+        } else if path.starts_with("/var/log/nginx") {
+            LogSource::Nginx(path.to_string())
         } else {
             LogSource::Apache(path.to_string())
         }
@@ -39,13 +41,14 @@ impl LogSource {
 
     fn path(&self) -> &str {
         match self {
-            LogSource::Apache(p) | LogSource::Ssh(p) => p,
+            LogSource::Apache(p) | LogSource::Nginx(p) | LogSource::Ssh(p) => p,
         }
     }
 
     fn prefix(&self) -> &'static str {
         match self {
             LogSource::Apache(_) => "APACHE",
+            LogSource::Nginx(_) => "NGINX",
             LogSource::Ssh(_) => "SSH",
         }
     }
@@ -53,13 +56,15 @@ impl LogSource {
     fn parse<'a>(&self, line: &'a str) -> Option<parse_logs::Log<'a>> {
         match self {
             LogSource::Apache(_) => parse_logs::parse_apache(line),
+            LogSource::Nginx(_) => parse_logs::parse_nginx(line),
             LogSource::Ssh(_) => parse_logs::parse_ssh(line),
         }
     }
 
     fn is_bad(&self, msg: &str) -> bool {
         match self {
-            LogSource::Apache(_) => test_path::is_bad_apache(msg),
+            LogSource::Apache(_) => test_path::is_bad_path(msg),
+            LogSource::Nginx(_) => test_path::is_bad_path(msg),
             LogSource::Ssh(_) => test_path::is_bad_ssh(msg),
         }
     }
@@ -70,7 +75,7 @@ fn main() {
     // ./guard test /var/log/apache2/access.log
     // ./guard test /var/log/apache2/access.log --print-all-matched
     // ./guard test /var/log/apache2/access.log --print-all-missed
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "test" {
         if args.len() < 3 {
             eprintln!(
@@ -99,6 +104,12 @@ fn main() {
     let guard_banned_ip_path =
         env::var("GUARD_BANNED_IP_PATH").expect("GUARD_BANNED_IP_PATH not set");
     let guard_log_path = env::var("GUARD_LOG_PATH").expect("GUARD_LOG_PATH not set");
+    let web_server = env::var("WEB_SERVER").expect("WEB_SERVER not set");
+
+    let dir_to_watch = match web_server.as_str() {
+        "apache2" => "/var/log/apache2",
+        _ => "/var/log/nginx",
+    };
 
     let log_sources = vec![LogSource::Ssh("/var/log/auth.log".to_string())];
 
@@ -139,13 +150,13 @@ fn main() {
         dir_map.entry(dir).or_default().push(source);
     }
 
-    let apache_dir = PathBuf::from("/var/log/apache2");
+    let apache_dir = PathBuf::from(dir_to_watch);
     if !dir_map.contains_key(&apache_dir) && apache_dir.exists() {
         dir_map.insert(apache_dir.clone(), vec![]);
     }
 
     for (log_dir, mut sources) in dir_map {
-        if log_dir == PathBuf::from("/var/log/apache2") {
+        if log_dir == PathBuf::from(dir_to_watch) {
             if let Ok(entries) = read_dir(&log_dir) {
                 for entry in entries.flatten() {
                     if let Some(name) = entry.file_name().to_str() {
@@ -195,6 +206,17 @@ fn main() {
                                                 let mut tracker = tracker_clone.lock().unwrap();
                                                 match parsed {
                                                     parse_logs::Log::Apache { ip, path } => {
+                                                        if !tracker.is_blocked(ip)
+                                                            && source.is_bad(path)
+                                                        {
+                                                            tracker.log(&format!(
+                                                                "[{}] Registering IP {ip}",
+                                                                source.prefix(),
+                                                            ));
+                                                            tracker.register_attempt(ip);
+                                                        }
+                                                    }
+                                                    parse_logs::Log::Nginx { ip, path } => {
                                                         if !tracker.is_blocked(ip)
                                                             && source.is_bad(path)
                                                         {

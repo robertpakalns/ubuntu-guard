@@ -25,7 +25,7 @@ pub fn test(path: &str, print_matched: bool, print_missed: bool) {
         if let Some(parsed) = source.parse(&line) {
             parsed_ok = true;
             match parsed {
-                parse_logs::Log::Apache { ip: _, path } => {
+                parse_logs::Log::Apache { path, .. } => {
                     if source.is_bad(path) {
                         matched = true;
                         matched_lines += 1;
@@ -33,7 +33,15 @@ pub fn test(path: &str, print_matched: bool, print_missed: bool) {
                         unmatched_lines += 1;
                     }
                 }
-                parse_logs::Log::Ssh { ip: _, msg } => {
+                parse_logs::Log::Nginx { path, .. } => {
+                    if source.is_bad(path) {
+                        matched = true;
+                        matched_lines += 1;
+                    } else {
+                        unmatched_lines += 1;
+                    }
+                }
+                parse_logs::Log::Ssh { msg, .. } => {
                     if source.is_bad(msg) {
                         matched = true;
                         matched_lines += 1;
