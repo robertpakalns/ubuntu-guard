@@ -309,7 +309,7 @@ impl GuardTracker {
             self.log(&format!("Linking {name} to INPUT in {cmd}"));
             if let Err(e) = Command::new("sudo")
                 .arg(cmd)
-                .arg("-A")
+                .arg("-I")
                 .arg("INPUT")
                 .arg("1") // Position 1 to reject banned IP addresses first
                 .arg("-j")
