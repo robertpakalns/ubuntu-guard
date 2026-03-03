@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     env,
     fs::read_dir,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
     thread::{sleep, spawn},
     time::Duration,
@@ -27,6 +27,7 @@ struct LogSource {
     path: PathBuf,
 }
 
+#[derive(Clone, Copy)]
 enum LogKind {
     Apache,
     Nginx,
@@ -47,10 +48,6 @@ impl LogSource {
             kind,
             path: path.into(),
         }
-    }
-
-    fn path(&self) -> &PathBuf {
-        &self.path
     }
 
     fn prefix(&self) -> &'static str {
@@ -110,17 +107,6 @@ fn main() {
 
     let guard_banned_ip_path: String = parse_env("GUARD_BANNED_IP_PATH");
     let guard_log_path: String = parse_env("GUARD_LOG_PATH");
-    let web_server: String = parse_env("WEB_SERVER");
-
-    let dir_to_watch = match web_server.as_str() {
-        "apache2" => "/var/log/apache2",
-        _ => "/var/log/nginx",
-    };
-
-    let log_sources = vec![LogSource {
-        kind: LogKind::Ssh,
-        path: "/var/log/auth.log".into(),
-    }];
 
     let tracker = Arc::new(Mutex::new(guard::GuardTracker::new(
         threshold,
@@ -148,35 +134,52 @@ fn main() {
         }
     });
 
+    // Directories to watch
+    let dirs_to_watch: Vec<(PathBuf, LogKind)> = vec![
+        ("/var/log".into(), LogKind::Ssh),
+        ("/var/log/apache2".into(), LogKind::Apache),
+        ("/var/log/nginx".into(), LogKind::Nginx),
+    ];
+
     let mut watchers = Vec::new();
-    let mut dir_map: HashMap<PathBuf, Vec<LogSource>> = HashMap::new();
 
-    for source in log_sources {
-        let dir = source
-            .path()
-            .parent()
-            .expect("Log file must have a parent directory")
-            .into();
-        dir_map.entry(dir).or_default().push(source);
-    }
+    for (dir_path, kind) in dirs_to_watch {
+        if !dir_path.exists() {
+            println!("Skipping {:?}: directory does not exist", dir_path);
+            continue;
+        }
 
-    let apache_dir = PathBuf::from(dir_to_watch);
-    if !dir_map.contains_key(&apache_dir) && apache_dir.exists() {
-        dir_map.insert(apache_dir.clone(), vec![]);
-    }
-
-    for (log_dir, mut sources) in dir_map {
-        if log_dir == PathBuf::from(dir_to_watch) {
-            if let Ok(entries) = read_dir(&log_dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if name.ends_with("access.log") {
-                            let path_str = entry.path().to_string_lossy().to_string();
-                            if !sources.iter().any(|s| *s.path() == path_str) {
-                                sources.push(LogSource {
-                                    kind: LogKind::Apache,
-                                    path: path_str.into(),
-                                });
+        // Collect relevant log files for this directory
+        let mut log_sources = Vec::new();
+        match kind {
+            LogKind::Ssh => {
+                let auth_log = dir_path.join("auth.log");
+                if auth_log.exists() {
+                    log_sources.push(LogSource {
+                        kind,
+                        path: auth_log,
+                    });
+                }
+            }
+            LogKind::Apache => {
+                if let Ok(entries) = read_dir(&dir_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name().and_then(|f| f.to_str()) {
+                            if name.ends_with("access.log") {
+                                log_sources.push(LogSource { kind, path });
+                            }
+                        }
+                    }
+                }
+            }
+            LogKind::Nginx => {
+                if let Ok(entries) = read_dir(&dir_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name().and_then(|f| f.to_str()) {
+                            if name.ends_with("access.log") {
+                                log_sources.push(LogSource { kind, path });
                             }
                         }
                     }
@@ -184,19 +187,18 @@ fn main() {
             }
         }
 
+        if log_sources.is_empty() {
+            println!("No log files found in {:?}", dir_path);
+            continue;
+        }
+
         let mut tail_readers: HashMap<String, reader::TailReader> = HashMap::new();
         let mut sources_map: HashMap<String, LogSource> = HashMap::new();
 
-        for src in sources {
-            let name = Path::new(src.path())
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
-
-            let reader = reader::TailReader::new(src.path().into())
-                .expect("Failed to initialize TailReader");
-
+        for src in log_sources {
+            let name = src.path.file_name().unwrap().to_string_lossy().to_string();
+            let reader =
+                reader::TailReader::new(src.path.clone()).expect("Failed to initialize TailReader");
             tail_readers.insert(name.clone(), reader);
             sources_map.insert(name, src);
         }
@@ -204,7 +206,7 @@ fn main() {
         let watched_files: Vec<String> = sources_map.keys().cloned().collect();
 
         let tracker_clone = tracker.clone();
-        let log_dir_clone = log_dir.clone();
+        let log_dir_clone = dir_path.clone();
 
         let mut watcher = RecommendedWatcher::new(
             move |res: Result<notify::Event>| {
@@ -264,7 +266,7 @@ fn main() {
             .expect("Failed to watch log directory");
 
         println!(
-            "Watching directory {:?} for log files {:?}",
+            "Watching directory {:?} with files: {:?}",
             log_dir_clone, watched_files
         );
         watchers.push(watcher);
