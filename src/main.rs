@@ -15,11 +15,11 @@ mod reader;
 mod test_path;
 mod test_regex;
 
-fn parse_env_usize(name: &str) -> u64 {
+fn parse_env<T: std::str::FromStr>(name: &str) -> T {
     env::var(name)
-        .expect(&format!("{name} not set"))
-        .parse::<u64>()
-        .expect(&format!("{name} must be an integer"))
+        .unwrap_or_else(|_| panic!("{name} not set"))
+        .parse()
+        .unwrap_or_else(|_| panic!("{name} must be a valid value"))
 }
 
 struct LogSource {
@@ -104,14 +104,13 @@ fn main() {
     // ./guard
     dotenvy::dotenv().ok();
 
-    let threshold = parse_env_usize("THRESHOLD");
-    let window = parse_env_usize("WINDOW_SECONDS");
-    let block_duration = parse_env_usize("BLOCK_DURATION_SECONDS");
+    let threshold: u64 = parse_env("THRESHOLD");
+    let window: u64 = parse_env("WINDOW_SECONDS");
+    let block_duration: u64 = parse_env("BLOCK_DURATION_SECONDS");
 
-    let guard_banned_ip_path =
-        env::var("GUARD_BANNED_IP_PATH").expect("GUARD_BANNED_IP_PATH not set");
-    let guard_log_path = env::var("GUARD_LOG_PATH").expect("GUARD_LOG_PATH not set");
-    let web_server = env::var("WEB_SERVER").expect("WEB_SERVER not set");
+    let guard_banned_ip_path: String = parse_env("GUARD_BANNED_IP_PATH");
+    let guard_log_path: String = parse_env("GUARD_LOG_PATH");
+    let web_server: String = parse_env("WEB_SERVER");
 
     let dir_to_watch = match web_server.as_str() {
         "apache2" => "/var/log/apache2",
@@ -212,33 +211,42 @@ fn main() {
                 if let Ok(event) = res {
                     if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                         for path in &event.paths {
-                            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                                if let Some(source) = sources_map.get(fname) {
-                                    if let Some(reader) = tail_readers.get(fname) {
-                                        for line in reader.read_new_lines() {
-                                            let mut tracker = tracker_clone.lock().unwrap();
+                            let fname = match path.file_name().and_then(|f| f.to_str()) {
+                                Some(name) => name,
+                                None => continue,
+                            };
 
-                                            if let Some(parsed) = source.parse(&line) {
-                                                let ip = parsed.ip();
-                                                let msg = parsed.message();
+                            let source = match sources_map.get(fname) {
+                                Some(src) => src,
+                                None => continue,
+                            };
 
-                                                if !tracker.is_blocked(ip) && source.is_bad(msg) {
-                                                    tracker.log(&format!(
-                                                        "[{}] Registering IP {ip}",
-                                                        source.prefix(),
-                                                    ));
-                                                    tracker.register_attempt(ip);
-                                                }
-                                            } else {
-                                                // Parsing error
-                                                tracker.log(&format!(
-                                                    "[{}] Failed to parse line: {}",
-                                                    source.prefix(),
-                                                    line
-                                                ));
-                                            }
-                                        }
+                            let reader = match tail_readers.get(fname) {
+                                Some(r) => r,
+                                None => continue,
+                            };
+
+                            for line in reader.read_new_lines() {
+                                let mut tracker = tracker_clone.lock().unwrap();
+
+                                if let Some(parsed) = source.parse(&line) {
+                                    let ip = parsed.ip();
+                                    let msg = parsed.message();
+
+                                    if !tracker.is_blocked(ip) && source.is_bad(msg) {
+                                        tracker.log(&format!(
+                                            "[{}] Registering IP {ip}",
+                                            source.prefix(),
+                                        ));
+                                        tracker.register_attempt(ip);
                                     }
+                                } else {
+                                    // Parsing error
+                                    tracker.log(&format!(
+                                        "[{}] Failed to parse line: {}",
+                                        source.prefix(),
+                                        line
+                                    ));
                                 }
                             }
                         }
