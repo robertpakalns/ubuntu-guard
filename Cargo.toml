@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dotenvy = "0.15.7"
-notify = "8.2.0"
-regex = "1.12.3"
-time = "0.3.47"
+dotenvy = { version = "0.15.7", default-features = false }
+notify = { version = "8.2.0", default-features = false }
+regex = { version = "1.12.3", features = [
+  "unicode-perl",
+  "unicode-case",
+], default-features = false }
+time = { version = "0.3.47", default-features = false }
