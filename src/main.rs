@@ -185,7 +185,7 @@ fn main() {
             }
         }
 
-        let mut tail_readers: HashMap<String, Arc<reader::TailReader>> = HashMap::new();
+        let mut tail_readers: HashMap<String, reader::TailReader> = HashMap::new();
         let mut sources_map: HashMap<String, LogSource> = HashMap::new();
 
         for src in sources {
@@ -194,10 +194,10 @@ fn main() {
                 .unwrap()
                 .to_string_lossy()
                 .to_string();
-            let reader = Arc::new(
-                reader::TailReader::new(src.path().into())
-                    .expect("Failed to initialize TailReader"),
-            );
+
+            let reader = reader::TailReader::new(src.path().into())
+                .expect("Failed to initialize TailReader");
+
             tail_readers.insert(name.clone(), reader);
             sources_map.insert(name, src);
         }

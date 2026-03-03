@@ -3,14 +3,14 @@ use std::{
     io::{BufRead, BufReader, Seek, SeekFrom},
     os::unix::fs::MetadataExt,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 pub struct TailReader {
-    path: Arc<PathBuf>,
-    file: Arc<Mutex<File>>,
-    position: Arc<Mutex<u64>>,
-    inode: Arc<Mutex<u64>>,
+    path: PathBuf,
+    file: Mutex<File>,
+    position: Mutex<u64>,
+    inode: Mutex<u64>,
 }
 
 impl TailReader {
@@ -21,10 +21,10 @@ impl TailReader {
         let inode = metadata.ino();
 
         Ok(Self {
-            path: Arc::new(path),
-            file: Arc::new(Mutex::new(file)),
-            position: Arc::new(Mutex::new(pos)),
-            inode: Arc::new(Mutex::new(inode)),
+            path: path,
+            file: Mutex::new(file),
+            position: Mutex::new(pos),
+            inode: Mutex::new(inode),
         })
     }
 
