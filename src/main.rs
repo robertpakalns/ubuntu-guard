@@ -69,7 +69,8 @@ impl LogSource {
     fn is_bad(&self, msg: &str) -> bool {
         match self.kind {
             LogKind::Apache | LogKind::Nginx => test_path::is_bad_path(msg),
-            LogKind::Ssh => test_path::is_bad_ssh(msg),
+            // If LogSource returns Some(Log<'_>), it is always bad attempt
+            LogKind::Ssh => true,
         }
     }
 }
@@ -242,14 +243,15 @@ fn main() {
                                         ));
                                         tracker.register_attempt(ip);
                                     }
-                                } else {
-                                    // Parsing error
-                                    tracker.log(&format!(
-                                        "[{}] Failed to parse line: {}",
-                                        source.prefix(),
-                                        line
-                                    ));
                                 }
+                                // else {
+                                //     // Parsing error
+                                //     tracker.log(&format!(
+                                //         "[{}] Failed to parse line: {}",
+                                //         source.prefix(),
+                                //         line
+                                //     ));
+                                // }
                             }
                         }
                     }

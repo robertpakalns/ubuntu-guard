@@ -36,11 +36,7 @@ pub fn parse_nginx(line: &str) -> Option<Log<'_>> {
         let path = caps.get(2)?.as_str();
         Some(Log::Nginx { ip, path })
     } else {
-        // Malformed requests
-        line.split_whitespace().next().map(|ip| Log::Apache {
-            ip,
-            path: "<malformed>",
-        })
+        None
     }
 }
 
@@ -50,16 +46,12 @@ pub fn parse_apache(line: &str) -> Option<Log<'_>> {
         let path = caps.get(2)?.as_str();
         Some(Log::Apache { ip, path })
     } else {
-        // Malformed requests
-        line.split_whitespace().next().map(|ip| Log::Apache {
-            ip,
-            path: "<malformed>",
-        })
+        None
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_apache2_nginx {
     use super::{Log, parse_apache};
 
     #[test]
@@ -67,99 +59,122 @@ mod tests {
         let cases = vec![
             (
                 r#"123.45.67.89 - - [24/Oct/2025:09:00:16 +0000] "GET / HTTP/1.1" 301 574 "-" "Mozilla/5.0""#,
-                Log::Apache {
+                Some(Log::Apache {
                     ip: "123.45.67.89",
                     path: "/",
-                },
+                }),
             ),
             (
                 r#"98.76.54.32 - - [24/Oct/2025:09:20:49 +0000] "GET /e.php HTTP/1.1" 403 439 "-" "curl/8.14.1""#,
-                Log::Apache {
+                Some(Log::Apache {
                     ip: "98.76.54.32",
                     path: "/e.php",
-                },
+                }),
             ),
             (
                 r#"111.222.333.44 - - [24/Oct/2025:10:17:16 +0000] "\x16\x03\x01" 400 483 "-" "-""#,
-                Log::Apache {
-                    ip: "111.222.333.44",
-                    path: "<malformed>",
-                },
+                None,
             ),
             (
                 r#"55.66.77.88 - - [24/Oct/2025:10:17:34 +0000] "-" 408 0 "-" "-""#,
-                Log::Apache {
-                    ip: "55.66.77.88",
-                    path: "<malformed>",
-                },
+                None,
             ),
             (
                 r#"123.123.123.123 - - [24/Oct/2025:10:09:35 +0000] "CONNECT api.my-ip.io:443 HTTP/1.1" 301 518 "-" "Go-http-client/1.1""#,
-                Log::Apache {
+                Some(Log::Apache {
                     ip: "123.123.123.123",
                     path: "api.my-ip.io:443",
-                },
+                }),
             ),
             (
                 r#"123.123.123.123 - - [25/Oct/2025:00:29:11 +0000] "GET /mail/.env.db HTTP/1.1" 301 536 "-" "Opera/8.02 (Windows NT 5.1; U; ru)""#,
-                Log::Apache {
+                Some(Log::Apache {
                     ip: "123.123.123.123",
                     path: "/mail/.env.db",
-                },
+                }),
             ),
             (
                 r#"123.123.123.123 - - [25/Oct/2025:11:10:28 +0000] "GET /db/phpmyadmin/index.php?lang=en HTTP/1.1" 301 574 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36""#,
-                Log::Apache {
+                Some(Log::Apache {
                     ip: "123.123.123.123",
                     path: "/db/phpmyadmin/index.php?lang=en",
-                },
+                }),
             ),
         ];
 
         for (line, expected) in cases {
-            let parsed =
-                parse_apache(line).unwrap_or_else(|| panic!("Failed to parse line: {}", line));
+            let parsed = parse_apache(line);
             assert_eq!(parsed, expected, "Line that failed: {}", line);
         }
     }
 }
 
 pub fn parse_ssh(line: &str) -> Option<Log<'_>> {
-    if !line.contains("sshd") {
+    if !(line.contains("sshd")
+        && (line.contains("Invalid user") || line.contains("Failed password")))
+    {
         return None;
     }
 
-    if line.contains("Failed password") {
-        if let Some(i) = line.find(" from ") {
-            let rest = &line[i + 6..];
-            if let Some(space_idx) = rest.find(' ') {
-                return Some(Log::Ssh {
-                    ip: &rest[..space_idx],
-                    msg: "Failed password",
-                });
-            }
+    let from_pos = line.find(" from ")?;
+    // Everything after " from "
+    let after = &line[from_pos + 6..];
+
+    // The IP address is the first "word" before the next space
+    let ip_end = after.find(' ')?;
+    let ip = &after[..ip_end];
+
+    Some(Log::Ssh {
+        ip,
+        msg: "Potentially malicious attempt",
+    })
+}
+
+#[cfg(test)]
+mod tests_ssh {
+    use super::{Log, parse_ssh};
+
+    #[test]
+    fn test_parse_ssh_lines() {
+        let cases = vec![
+            (
+                "2026-01-01T19:05:04.778851+00:00 rob sshd[1]: Invalid user sdfrob from 127.0.0.1 port 42",
+                Some(Log::Ssh {
+                    ip: "127.0.0.1",
+                    msg: "Potentially malicious attempt",
+                }),
+            ),
+            (
+                "2026-01-01T19:05:47.383708+00:00 rob sshd[1]: Failed password for invalid user sdfrob from 127.0.0.1 port 42 ssh2",
+                Some(Log::Ssh {
+                    ip: "127.0.0.1",
+                    msg: "Potentially malicious attempt",
+                }),
+            ),
+            (
+                "2026-01-01T19:06:09.199880+00:00 rob sshd[1]: Failed password for rob from 127.0.0.1 port 42 ssh2",
+                Some(Log::Ssh {
+                    ip: "127.0.0.1",
+                    msg: "Potentially malicious attempt",
+                }),
+            ),
+            (
+                "2026-01-01T00:00:00.000000+00:00 rob CRON[1]: pam_unix(cron:session): session closed for user root",
+                None,
+            ),
+            (
+                "2026-01-01T00:00:00.000000+00:00 rob sshd[1]: pam_unix(sshd:auth): check pass; user unknown",
+                None,
+            ),
+            (
+                "2026-01-01T00:00:00.000000+00:00 rob sudo: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=1)",
+                None,
+            ),
+        ];
+
+        for (line, expected) in cases {
+            let parsed = parse_ssh(line);
+            assert_eq!(parsed, expected, "Line that failed: {}", line);
         }
     }
-
-    if line.contains("Invalid user") {
-        if let Some(i) = line.find(" from ") {
-            let rest = &line[i + 6..];
-            if let Some(space_idx) = rest.find(' ') {
-                return Some(Log::Ssh {
-                    ip: &rest[..space_idx],
-                    msg: "Invalid user",
-                });
-            }
-        }
-    }
-
-    if line.contains("Connection closed by") {
-        return None;
-    }
-
-    if line.contains("authentication failure") {
-        return None;
-    }
-
-    None
 }

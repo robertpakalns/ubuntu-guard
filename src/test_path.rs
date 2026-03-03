@@ -155,7 +155,3 @@ mod tests {
         }
     }
 }
-
-pub fn is_bad_ssh(path: &str) -> bool {
-    path.contains("Failed password") || path.contains("Invalid user")
-}
