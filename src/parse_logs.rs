@@ -8,12 +8,30 @@ pub enum Log<'a> {
     Ssh { ip: &'a str, msg: &'a str },
 }
 
-static APACHE_BAD_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+impl<'a> Log<'a> {
+    pub fn ip(&self) -> &str {
+        match self {
+            Self::Apache { ip, .. } => ip,
+            Self::Nginx { ip, .. } => ip,
+            Self::Ssh { ip, .. } => ip,
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Apache { path, .. } => path,
+            Self::Nginx { path, .. } => path,
+            Self::Ssh { msg, .. } => msg,
+        }
+    }
+}
+
+static BAD_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^(\S+) \S+ \S+ \[.*?\] "(?:\S+) (\S+)[^"]*" \d+ \d+ "#).unwrap()
 });
 
 pub fn parse_nginx(line: &str) -> Option<Log<'_>> {
-    if let Some(caps) = APACHE_BAD_PATH_REGEX.captures(line) {
+    if let Some(caps) = BAD_PATH_REGEX.captures(line) {
         let ip = caps.get(1)?.as_str();
         let path = caps.get(2)?.as_str();
         Some(Log::Nginx { ip, path })
@@ -27,7 +45,7 @@ pub fn parse_nginx(line: &str) -> Option<Log<'_>> {
 }
 
 pub fn parse_apache(line: &str) -> Option<Log<'_>> {
-    if let Some(caps) = APACHE_BAD_PATH_REGEX.captures(line) {
+    if let Some(caps) = BAD_PATH_REGEX.captures(line) {
         let ip = caps.get(1)?.as_str();
         let path = caps.get(2)?.as_str();
         Some(Log::Apache { ip, path })

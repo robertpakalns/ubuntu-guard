@@ -22,50 +22,57 @@ fn parse_env_usize(name: &str) -> u64 {
         .expect(&format!("{name} must be an integer"))
 }
 
-enum LogSource {
-    Apache(String),
-    Nginx(String),
-    Ssh(String),
+struct LogSource {
+    kind: LogKind,
+    path: PathBuf,
+}
+
+enum LogKind {
+    Apache,
+    Nginx,
+    Ssh,
 }
 
 impl LogSource {
     fn from_path(path: &str) -> Self {
-        if path == "/var/log/auth.log" {
-            LogSource::Ssh(path.to_string())
+        let kind = if path == "/var/log/auth.log" {
+            LogKind::Ssh
         } else if path.starts_with("/var/log/nginx") {
-            LogSource::Nginx(path.to_string())
+            LogKind::Nginx
         } else {
-            LogSource::Apache(path.to_string())
+            LogKind::Apache
+        };
+
+        LogSource {
+            kind,
+            path: path.into(),
         }
     }
 
-    fn path(&self) -> &str {
-        match self {
-            LogSource::Apache(p) | LogSource::Nginx(p) | LogSource::Ssh(p) => p,
-        }
+    fn path(&self) -> &PathBuf {
+        &self.path
     }
 
     fn prefix(&self) -> &'static str {
-        match self {
-            LogSource::Apache(_) => "APACHE",
-            LogSource::Nginx(_) => "NGINX",
-            LogSource::Ssh(_) => "SSH",
+        match self.kind {
+            LogKind::Apache => "APACHE",
+            LogKind::Nginx => "NGINX",
+            LogKind::Ssh => "SSH",
         }
     }
 
     fn parse<'a>(&self, line: &'a str) -> Option<parse_logs::Log<'a>> {
-        match self {
-            LogSource::Apache(_) => parse_logs::parse_apache(line),
-            LogSource::Nginx(_) => parse_logs::parse_nginx(line),
-            LogSource::Ssh(_) => parse_logs::parse_ssh(line),
+        match self.kind {
+            LogKind::Apache => parse_logs::parse_apache(line),
+            LogKind::Nginx => parse_logs::parse_nginx(line),
+            LogKind::Ssh => parse_logs::parse_ssh(line),
         }
     }
 
     fn is_bad(&self, msg: &str) -> bool {
-        match self {
-            LogSource::Apache(_) => test_path::is_bad_path(msg),
-            LogSource::Nginx(_) => test_path::is_bad_path(msg),
-            LogSource::Ssh(_) => test_path::is_bad_ssh(msg),
+        match self.kind {
+            LogKind::Apache | LogKind::Nginx => test_path::is_bad_path(msg),
+            LogKind::Ssh => test_path::is_bad_ssh(msg),
         }
     }
 }
@@ -111,7 +118,10 @@ fn main() {
         _ => "/var/log/nginx",
     };
 
-    let log_sources = vec![LogSource::Ssh("/var/log/auth.log".to_string())];
+    let log_sources = vec![LogSource {
+        kind: LogKind::Ssh,
+        path: "/var/log/auth.log".into(),
+    }];
 
     let tracker = Arc::new(Mutex::new(guard::GuardTracker::new(
         threshold,
@@ -143,7 +153,8 @@ fn main() {
     let mut dir_map: HashMap<PathBuf, Vec<LogSource>> = HashMap::new();
 
     for source in log_sources {
-        let dir = PathBuf::from(source.path())
+        let dir = source
+            .path()
             .parent()
             .expect("Log file must have a parent directory")
             .into();
@@ -162,8 +173,11 @@ fn main() {
                     if let Some(name) = entry.file_name().to_str() {
                         if name.ends_with("access.log") {
                             let path_str = entry.path().to_string_lossy().to_string();
-                            if !sources.iter().any(|s| s.path() == path_str) {
-                                sources.push(LogSource::Apache(path_str));
+                            if !sources.iter().any(|s| *s.path() == path_str) {
+                                sources.push(LogSource {
+                                    kind: LogKind::Apache,
+                                    path: path_str.into(),
+                                });
                             }
                         }
                     }
@@ -202,46 +216,22 @@ fn main() {
                                 if let Some(source) = sources_map.get(fname) {
                                     if let Some(reader) = tail_readers.get(fname) {
                                         for line in reader.read_new_lines() {
+                                            let mut tracker = tracker_clone.lock().unwrap();
+
                                             if let Some(parsed) = source.parse(&line) {
-                                                let mut tracker = tracker_clone.lock().unwrap();
-                                                match parsed {
-                                                    parse_logs::Log::Apache { ip, path } => {
-                                                        if !tracker.is_blocked(ip)
-                                                            && source.is_bad(path)
-                                                        {
-                                                            tracker.log(&format!(
-                                                                "[{}] Registering IP {ip}",
-                                                                source.prefix(),
-                                                            ));
-                                                            tracker.register_attempt(ip);
-                                                        }
-                                                    }
-                                                    parse_logs::Log::Nginx { ip, path } => {
-                                                        if !tracker.is_blocked(ip)
-                                                            && source.is_bad(path)
-                                                        {
-                                                            tracker.log(&format!(
-                                                                "[{}] Registering IP {ip}",
-                                                                source.prefix(),
-                                                            ));
-                                                            tracker.register_attempt(ip);
-                                                        }
-                                                    }
-                                                    parse_logs::Log::Ssh { ip, msg } => {
-                                                        if !tracker.is_blocked(ip)
-                                                            && source.is_bad(msg)
-                                                        {
-                                                            tracker.log(&format!(
-                                                                "[{}] Registering IP {ip}",
-                                                                source.prefix(),
-                                                            ));
-                                                            tracker.register_attempt(ip);
-                                                        }
-                                                    }
+                                                let ip = parsed.ip();
+                                                let msg = parsed.message();
+
+                                                if !tracker.is_blocked(ip) && source.is_bad(msg) {
+                                                    tracker.log(&format!(
+                                                        "[{}] Registering IP {ip}",
+                                                        source.prefix(),
+                                                    ));
+                                                    tracker.register_attempt(ip);
                                                 }
-                                                // Failed to parse a line. An error is logged only for Apache
-                                            } else if let LogSource::Apache(_) = source {
-                                                tracker_clone.lock().unwrap().log(&format!(
+                                            } else {
+                                                // Parsing error
+                                                tracker.log(&format!(
                                                     "[{}] Failed to parse line: {}",
                                                     source.prefix(),
                                                     line
