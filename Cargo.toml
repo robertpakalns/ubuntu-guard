@@ -15,8 +15,4 @@ debug-assertions = false
 [dependencies]
 dotenvy = { version = "0.15.7", default-features = false }
 notify = { version = "8.2.0", default-features = false }
-regex = { version = "1.12.3", features = [
-  "unicode-perl",
-  "unicode-case",
-], default-features = false }
 time = { version = "0.3.47", default-features = false }
