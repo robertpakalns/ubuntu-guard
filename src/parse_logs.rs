@@ -1,6 +1,3 @@
-use regex::Regex;
-use std::sync::LazyLock;
-
 #[derive(Debug, PartialEq)]
 pub enum Log<'a> {
     Apache { ip: &'a str, path: &'a str },
@@ -26,28 +23,36 @@ impl<'a> Log<'a> {
     }
 }
 
-static BAD_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^(\S+) \S+ \S+ \[.*?\] "(?:\S+) (\S+)[^"]*" \d+ \d+ "#).unwrap()
-});
+fn parse_access(line: &str) -> Option<(&str, &str)> {
+    // IP address is the first whitespace-separated token
+    let mut parts = line.splitn(2, ' ');
+    let ip = parts.next()?;
+    let rest = parts.next()?;
+
+    // Find the first quoted request
+    let first_quote = rest.find('"')?;
+    let after_first = &rest[first_quote + 1..];
+
+    let second_quote = after_first.find('"')?;
+    let request = &after_first[..second_quote];
+
+    // Request should be: METHOD PATH HTTP/X.Y
+    let mut req_parts = request.split_whitespace();
+
+    let _ = req_parts.next()?; // GET/POST/CONNECT etc.
+    let path = req_parts.next()?;
+
+    Some((ip, path))
+}
 
 pub fn parse_nginx(line: &str) -> Option<Log<'_>> {
-    if let Some(caps) = BAD_PATH_REGEX.captures(line) {
-        let ip = caps.get(1)?.as_str();
-        let path = caps.get(2)?.as_str();
-        Some(Log::Nginx { ip, path })
-    } else {
-        None
-    }
+    let (ip, path) = parse_access(line)?;
+    Some(Log::Nginx { ip, path })
 }
 
 pub fn parse_apache(line: &str) -> Option<Log<'_>> {
-    if let Some(caps) = BAD_PATH_REGEX.captures(line) {
-        let ip = caps.get(1)?.as_str();
-        let path = caps.get(2)?.as_str();
-        Some(Log::Apache { ip, path })
-    } else {
-        None
-    }
+    let (ip, path) = parse_access(line)?;
+    Some(Log::Apache { ip, path })
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use regex::RegexSet;
 use std::sync::LazyLock;
 
-static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
+static BAD_PATH_REGEX: LazyLock<RegexSet> = LazyLock::new(|| {
     RegexSet::new(&[
         r"(?i)/\.env(\.[A-Za-z0-9_-]+)?(\b|/|\?)",
         r"(?i)^/(\.config)\b",
@@ -48,7 +48,7 @@ static BAD_APACHE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
 });
 
 pub fn is_bad_path(path: &str) -> bool {
-    BAD_APACHE_SET.is_match(path)
+    BAD_PATH_REGEX.is_match(path)
 }
 
 #[cfg(test)]
